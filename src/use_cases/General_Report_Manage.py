@@ -16,9 +16,6 @@ class Show(ABC):
 class Pagination(Show):
     def render(self,st:st,how_many_pages:int,middle:int, total_records:int, min_value:int, step:int, data:pd.DataFrame):
 
-        if 'batch_size' not in st.session_state or st.session_state.batch_size not in how_many_pages:
-            st.session_state.batch_size = how_many_pages[middle]
-
         if 'current_page' not in st.session_state:
             st.session_state.current_page = 1
 

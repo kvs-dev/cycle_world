@@ -54,6 +54,9 @@ if full_count == 0:
 how_many_pages = count_pages(pd.DataFrame(index=range(full_count)))
 middle = who_is_middle(how_many_pages)
 
+if 'batch_size' not in st.session_state or st.session_state.batch_size not in how_many_pages:
+    st.session_state.batch_size = how_many_pages[middle]    
+
 df, total_records = query.get(page=st.session_state.current_page, batch_size=st.session_state.batch_size, keyword_search_general_report=keyword_search_general_report)
 
 df = parse_dataframe(df)

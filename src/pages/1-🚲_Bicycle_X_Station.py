@@ -3,59 +3,39 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import io
+from adapaters.Bicycle_X_Station_Service import BicycleXStation
+from snowflake.connector import SnowflakeConnection
+from use_cases.Bicycle_X_Station_Manage import Download_Excel, Pagination, Map, Pie_Chart, Bar_Chart
+from use_cases.DTOs.Ax_Label import AX_LabelImplementation
+from use_cases.DTOs.Legend import LegendImplementation
 
-st.title("Report bicycle station data")
-st.write('This report shows the data of bicycles by station.')
+def create_excel_file(dataframe:pd.DataFrame, filename: str, buffer:io.BytesIO) -> io.BytesIO:
 
-conn = st.connection("snowflake")
-buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+        dataframe.to_excel(writer, index=False, sheet_name=filename)
+        writer.close()
+    buffer.seek(0)
+    return buffer
 
-keyword_search_general_report = st.text_input("Search", placeholder='search by sector...', value='Marylebone')
-
-if keyword_search_general_report =='Marylebone':
-    st.info('Delete the search term to see all information.')
-
-def load_table():
-    session = conn.session()
+def parse_stations(stations:pd.DataFrame, keyword_search_general_report:str, connection: SnowflakeConnection, pandas:pd) -> pd.DataFrame:
     if keyword_search_general_report:
-        return session.sql(f"SELECT * FROM table(SEARCH_IN_STATIONXBICYCLE_REPORT('{keyword_search_general_report.title()}'))").to_pandas()
-    return session.table('CYCLE_WORLD.ENHANCED.STATIONXBICYCLE').to_pandas()
+        stations_name = stations['STATION_NAME'].unique()
+        stations_dfs = []
 
+        for station in stations_name:
+            safe_station = station.title().replace("'", "''")
+            sql_query = connection.session().sql(f"SELECT * FROM table(SEARCH_IN_STATIONS('{safe_station}'))")
+            result_df = sql_query.to_pandas()
+            stations_dfs.append(result_df)
 
-
-@st.cache_data(show_spinner=False)
-def split_frame(input_df, rows):
-    df = [input_df.loc[i : i + rows - 1, :] for i in range(0, len(input_df), rows)]
-    return df
-
-session = conn.session()
-df = load_table()
-
-with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-    df.to_excel(writer, index=False, sheet_name='General Report')
-    writer.close()
-
-buffer.seek(0)
-
-stations = []
-if keyword_search_general_report:
-    stations_name = df['STATION_NAME'].unique()
-    stations_dfs = []
-
-    for station in stations_name:
-        safe_station = station.title().replace("'", "''")
-        sql_query = session.sql(f"SELECT * FROM table(SEARCH_IN_STATIONS('{safe_station}'))")
-        result_df = sql_query.to_pandas()
-        stations_dfs.append(result_df)
-
-    if stations_dfs:
-        stations = pd.concat(stations_dfs, ignore_index=True)
-        stations['LATITUDE'] = stations['LATITUDE'].str.replace(',', '.').astype(float)
-        stations['LONGITUDE'] = stations['LONGITUDE'].str.replace(',', '.').astype(float)
-    else:
-        stations = pd.DataFrame()
-
-
+        if stations_dfs:
+            stations = pandas.concat(stations_dfs, ignore_index=True)
+            stations['LATITUDE'] = stations['LATITUDE'].str.replace(',', '.').astype(float)
+            stations['LONGITUDE'] = stations['LONGITUDE'].str.replace(',', '.').astype(float)
+            return stations
+        
+        return pandas.DataFrame()
+    
 def count_pages(df):
     count = []
     df_length = len(df)
@@ -72,43 +52,38 @@ def who_is_middle(pages:int):
     
     return int(pages_length / 2)
 
-pagination = st.container()
-how_many_pages = count_pages(df)
-middle = who_is_middle(how_many_pages)
+
+
+conn = st.connection("snowflake")
+buffer = io.BytesIO()
+
+st.title("Report bicycle station data")
+st.write('This report shows the data of bicycles by station.')
+
+keyword_search_general_report = st.text_input("Search", placeholder='search by sector...', value='Marylebone')
+
+if keyword_search_general_report =='Marylebone':
+    st.info('Delete the search term to see all information.')
+
+
+query = BicycleXStation(conn=conn)
+df = query.get(keyword_search_general_report=keyword_search_general_report)
 
 if not df.empty:
-    st.download_button(
-        label="Download to Excel file!!!",
-        data=buffer,
-        file_name="report.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        use_container_width=True,
-    )
 
-    bottom_menu = st.columns((4, 2, 1))
-    with bottom_menu[2]:
-        batch_size = st.selectbox("Page Size", options=how_many_pages, index=middle)
-    with bottom_menu[1]:
+    pagination = st.container()
+    how_many_pages = count_pages(df)
+    middle = who_is_middle(how_many_pages)
+    show_pagination = Pagination(dataframe=df, how_many_pages=how_many_pages, middle=middle, min_value=1, step=1)
+    show_pagination.render(st=st, pagination=pagination)
 
-        total_pages = (
-            int(len(df) / batch_size) if int(len(df) / batch_size) > 0 else 1
-        )
-        current_page = st.number_input(
-            "Page", min_value=1, max_value=total_pages, step=1
-        )
-    with bottom_menu[0]:
-        st.markdown(f"Page **{current_page}** of **{total_pages}** ")
+    buffer = create_excel_file(dataframe=df, filename='Report by sector', buffer=buffer)
+    show_excel_download_button = Download_Excel(buffer=buffer, filename='report_by_sector.xlsx', label="Download to Excel file!!!")
+    show_excel_download_button.render(st=st)
 
-
-    pages = split_frame(df, batch_size)
-    pagination.dataframe(data=pages[current_page - 1], use_container_width=True, hide_index=True)
-
-    if keyword_search_general_report:
-        st.map(data=stations, zoom=12, use_container_width=True)
-
-    bike_color_counts = df['BIKE_COLOR'].value_counts()
-
-    fig, ax = plt.subplots(figsize=(8, 8), subplot_kw=dict(aspect="equal"))
+    stations = parse_stations(stations=df, keyword_search_general_report=keyword_search_general_report, connection=conn, pandas=pd)
+    show_map = Map(dataframe=stations, keyword_search_general_report=keyword_search_general_report, zoom=12)
+    show_map.render(st=st)
 
 
     color_mapping = {
@@ -119,63 +94,18 @@ if not df.empty:
     'Black': 'black'
     }
 
-    pie_colors = [color_mapping[color] for color in bike_color_counts.index]
+    legend = LegendImplementation(title='Bike Colors', loc='upper right')
+    show_pie_chart = Pie_Chart(dataframe=df, plt=plt, np=np)
+    show_pie_chart.render(color_mapping=color_mapping, legend=legend, title='Journeys by bicycle color', st=st)
 
-    total = sum(bike_color_counts.values)
-    percentages = [(count/total)*100 for count in bike_color_counts.values]
-    absolute_values = bike_color_counts.values
-
-    def func(pct, allvals):
-        absolute = int(np.round(pct/100.*np.sum(allvals)))
-        return f"{pct:.1f}%\n({absolute})"
-
-    wedges, texts, autotexts = ax.pie(
-        bike_color_counts.values,
-        colors=pie_colors,
-        autopct=lambda pct: func(pct, bike_color_counts.values),
-        textprops=dict(color="w", weight="bold")
-    )
-
-    ax.legend(
-        wedges, 
-        bike_color_counts.index,
-        title="Bike Colors",
-        loc="upper right",
-        bbox_to_anchor=(1.1, 1)
-    )
-
-
-    st.write("## Journeys by bicycle color")
-    st.pyplot(fig)
-
-
-
-
-
-    st.write("## Journeys by timezone")
-
-    timezone_counts = df.groupby('TIMEZONE')['BICYCLES_THAT_ARRIVED'].sum()
-
-    fig, ax = plt.subplots(figsize=(10, 6))
-
-    timezones = timezone_counts.index.tolist() 
-    counts = timezone_counts.values 
 
     colors = {'Morning': 'tab:orange', 'Valley': 'tab:green', 'Afternoon': 'tab:blue'}
-    bar_colors = [colors.get(tz, 'tab:gray') for tz in timezones]
 
-    ax.bar(timezones, counts, color=bar_colors)
+    show_bar_chart = Bar_Chart(dataframe=df, plt=plt)
+    ax_label = AX_LabelImplementation(x_label='Timezone', y_label='Number of bicycles', title='Journeys by timezone')
+    show_bar_chart.render(st=st, title='Journeys by timezone', colors=colors, ax_label=ax_label)
 
-    ax.set_xlabel('Timezone')
-    ax.set_ylabel('Number of bicycles')
-    ax.set_title('Number of bicycles arriving by timezone')
 
-    for i, v in enumerate(counts):
-        ax.text(i, v + 0.1, str(v), ha='center')
-
-    plt.tight_layout()
-
-    st.pyplot(fig)
 else:
     st.info('Data not found, please check the spelling of the search term.')
 

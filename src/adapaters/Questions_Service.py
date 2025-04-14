@@ -130,3 +130,57 @@ class Bike_Color(Query):
         select bike_color,count(*) as total from CYCLE_WORLD.RAW.BIKES GROUP BY bike_color ORDER BY TOTAL DESC;
         """
         return self.session.sql(query).to_pandas()
+
+
+class Stations_No_Bicycles(Query):
+        def __init__(self, conn: SnowflakeConnection):
+            """
+            Initializes the Stations_More_Crowded object with a Snowflake connection.
+            """
+            super().__init__(conn)
+        
+        def get(self) -> pd.DataFrame:
+            query = """
+            WITH station_events AS (
+            SELECT 
+                START_DATE AS event_time,
+                DATE(START_DATE) AS event_day,
+                START_STATION_ID AS station_id,
+                -1 AS bike_change
+            FROM CYCLE_WORLD.RAW.JOURNEYS
+            
+            UNION ALL
+            
+            SELECT 
+                END_DATE AS event_time,
+                DATE(END_DATE) AS event_day,
+                END_STATION_ID AS station_id,
+                1 AS bike_change
+            FROM CYCLE_WORLD.RAW.JOURNEYS
+            ),
+            daily_station_balance AS (
+                SELECT
+                    station_id,
+                    event_day,
+                    event_time,
+                    SUM(bike_change) OVER (
+                        PARTITION BY station_id, event_day
+                        ORDER BY event_time
+                        ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+                    ) AS daily_running_balance
+                FROM station_events
+            ),
+            min_daily_balance AS (
+                SELECT
+                    station_id,
+                    event_day,
+                    MIN(daily_running_balance) AS min_balance
+                FROM daily_station_balance
+                GROUP BY station_id, event_day
+            )
+            SELECT 
+                CASE WHEN COUNT(*) > 0 THEN 'YES' ELSE 'NO' END AS HAVE_DAY_NO_BICYCLES
+            FROM min_daily_balance
+            WHERE min_balance < 0
+            """
+            return self.session.sql(query).to_pandas()

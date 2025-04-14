@@ -34,7 +34,7 @@ class Crowded_Stations(Show):
         streamlit.pyplot(fig, use_container_width=True)
 
 class Cards(Show):
-    def render(self, percentage_by_journeys: pd.DataFrame, avg_journey_duration: pd.DataFrame, bike_color:pd.DataFrame, st:st ) -> None:
+    def render(self, percentage_by_journeys: pd.DataFrame, avg_journey_duration: pd.DataFrame, bike_color:pd.DataFrame, stations_without_bicycles:pd.DataFrame, st:st ) -> None:
         """
         Renders the cards for the metrics.
         """
@@ -59,12 +59,17 @@ class Cards(Show):
                 st.metric(
                     label="🚲 Most Common Bike Color",
                     value=bike_color['BIKE_COLOR'][0],
-                    delta=float(bike_color['TOTAL'][0])
                 )
 
             with col4:
                 st.metric(
                     label="🚲 Less Common Bike Color",
                     value=bike_color['BIKE_COLOR'][len(bike_color)-1],
-                    delta=float(bike_color['TOTAL'][len(bike_color)-1])
+                )
+
+            col4, col5 = st.columns([1, 1])
+            with col4:
+                st.metric(
+                    label="🏬 Ever a day with no bikes available at a station?",
+                    value=f"{stations_without_bicycles['HAVE_DAY_NO_BICYCLES'][0]}"
                 )
